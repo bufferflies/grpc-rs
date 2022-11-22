@@ -17,7 +17,7 @@ fn poll_queue(tx: mpsc::Sender<CompletionQueue>) {
     let cq = CompletionQueue::new(cq, worker_info);
     tx.send(cq.clone()).expect("send back completion queue");
     loop {
-        let e = cq.next();
+        let e: grpc_sys::grpc_event = cq.next();
         match e.type_ {
             EventType::GRPC_QUEUE_SHUTDOWN => break,
             // timeout should not happen in theory.

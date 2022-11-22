@@ -13,6 +13,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
+use std::cell::RefCell;
 
 use futures_util::task::{waker_ref, ArcWake};
 
@@ -88,6 +90,8 @@ pub struct SpawnTask {
     state: AtomicU8,
     kicker: Kicker,
     queue: Arc<WorkQueue>,
+    pub push_time: RefCell<Instant>,
+    pub start_time: Instant,
 }
 
 /// `SpawnTask` access is guarded by `state` field, which guarantees Sync.
@@ -102,7 +106,13 @@ impl SpawnTask {
             state: AtomicU8::new(IDLE),
             kicker,
             queue,
+            start_time: Instant::now(),
+            push_time: RefCell::new(Instant::now()),
         }
+    }
+
+    fn reset_push_time(&self) -> Instant {
+        self.push_time.replace(Instant::now())
     }
 
     /// Marks the state of this task to NOTIFIED.
@@ -154,6 +164,7 @@ impl ArcWake for SpawnTask {
 
         // It can lead to deadlock if poll the future immediately. So we need to
         // defer the work instead.
+        task.reset_push_time();
         if let Some(UnfinishedWork(w)) = task.queue.push_work(UnfinishedWork(task.clone())) {
             match task.kicker.kick(Box::new(CallTag::Spawn(w))) {
                 // If the queue is shutdown, then the tag will be notified
@@ -176,6 +187,10 @@ pub struct UnfinishedWork(Arc<SpawnTask>);
 impl UnfinishedWork {
     pub fn finish(self) {
         resolve(self.0, true);
+    }
+
+    pub fn wait_duration(&self) -> f64 {
+        self.0.reset_push_time().elapsed().as_secs_f64()
     }
 }
 
