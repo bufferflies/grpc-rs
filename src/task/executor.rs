@@ -7,6 +7,7 @@
 //! Apparently, to minimize context switch, it's better to bind the future to the
 //! same completion queue as its inner call. Hence method `Executor::spawn` is provided.
 
+use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::future::Future;
 use std::pin::Pin;
@@ -14,7 +15,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
-use std::cell::RefCell;
 
 use futures_util::task::{waker_ref, ArcWake};
 
@@ -23,6 +23,9 @@ use crate::call::Call;
 use crate::cq::{CompletionQueue, WorkQueue};
 use crate::error::{Error, Result};
 use crate::grpc_sys::{self, grpc_call_error};
+use crate::metrics::{
+    GRPC_POOL_KICK_COUNT, GRPC_POOL_TASK_TOTAL_DURATION, GRPC_TASK_WAIT_DURATION,
+};
 
 /// A handle to a `Spawn`.
 /// Inner future is expected to be polled in the same thread as cq.
@@ -115,6 +118,10 @@ impl SpawnTask {
         self.push_time.replace(Instant::now())
     }
 
+    fn start_time(&self) -> &Instant {
+        &self.start_time
+    }
+
     /// Marks the state of this task to NOTIFIED.
     ///
     /// Returns true means the task was IDLE, needs to be scheduled.
@@ -165,7 +172,12 @@ impl ArcWake for SpawnTask {
         // It can lead to deadlock if poll the future immediately. So we need to
         // defer the work instead.
         task.reset_push_time();
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("unknown")
+            .to_owned();
         if let Some(UnfinishedWork(w)) = task.queue.push_work(UnfinishedWork(task.clone())) {
+            GRPC_POOL_KICK_COUNT.with_label_values(&[&name]).inc();
             match task.kicker.kick(Box::new(CallTag::Spawn(w))) {
                 // If the queue is shutdown, then the tag will be notified
                 // eventually. So just skip here.
@@ -199,6 +211,15 @@ impl UnfinishedWork {
 /// `woken` indicates that if the cq is waken up by itself.
 fn poll(task: Arc<SpawnTask>, woken: bool) {
     let mut init_state = if woken { NOTIFIED } else { IDLE };
+    let name = std::thread::current()
+        .name()
+        .unwrap_or("unknown")
+        .to_owned();
+    if woken {
+        let grpc_pool_wait_duration = GRPC_TASK_WAIT_DURATION.with_label_values(&[&name]);
+        grpc_pool_wait_duration.observe(task.reset_push_time().elapsed().as_secs_f64());
+    }
+
     // TODO: maybe we need to break the loop to avoid hunger.
     loop {
         match task
@@ -222,6 +243,10 @@ fn poll(task: Arc<SpawnTask>, woken: bool) {
         {
             Poll::Ready(()) => {
                 task.state.store(COMPLETED, Ordering::Release);
+                let start_time = task.start_time();
+                let grpc_pool_wait_duration =
+                    GRPC_POOL_TASK_TOTAL_DURATION.with_label_values(&[&name]);
+                grpc_pool_wait_duration.observe(start_time.elapsed().as_secs_f64());
                 unsafe { &mut *task.handle.get() }.take();
             }
             _ => {

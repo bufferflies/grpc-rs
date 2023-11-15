@@ -40,8 +40,8 @@ mod env;
 mod error;
 mod log_util;
 mod metadata;
-mod quota;
 mod metrics;
+mod quota;
 #[cfg(feature = "_secure")]
 mod security;
 mod server;

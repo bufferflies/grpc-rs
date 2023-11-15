@@ -11,7 +11,33 @@ lazy_static! {
         "grpc_task_wait_duration",
         "Bucketed histogram of grpc wait time",
         &["name"],
-        exponential_buckets(0.00001, 2.0, 20).unwrap()
+        exponential_buckets(1e-7, 2.0, 20).unwrap() // 100ns ~ 100ms
+    )
+    .unwrap();
+
+    // Grpc pool io handle duration .
+    pub static ref GRPC_POOL_IO_HANDLE_DURATION: HistogramVec = register_histogram_vec!(
+        "grpc_pool_io_handle_duration",
+        "Bucketed histogram of grpc pool handle duration",
+        &["name"],
+        exponential_buckets(1e-7, 2.0, 20).unwrap() // 100ns ~ 100ms
+    )
+    .unwrap();
+
+    // Grpc handle repoll duration
+    pub static ref GRPC_POOL_REPOLL_DURATION: HistogramVec = register_histogram_vec!(
+        "grpc_pool_repoll_duration",
+        "Bucketed histogram of grpc pool repoll duration",
+        &["name"],
+        exponential_buckets(1e-7, 2.0, 20).unwrap() // 100ns ~ 100ms
+    )
+    .unwrap();
+
+    pub static ref GRPC_POOL_TASK_TOTAL_DURATION: HistogramVec = register_histogram_vec!(
+        "grpc_pool_task_total_duration",
+        "Bucketed histogram of grpc pool task total duration",
+        &["name"],
+        exponential_buckets(1e-7, 2.0, 20).unwrap() // 100ns ~ 100ms
     )
     .unwrap();
 
@@ -22,4 +48,14 @@ lazy_static! {
         &["name"]
     )
     .unwrap();
+
+       // Grpc pool pending task .
+       pub static ref GRPC_POOL_KICK_COUNT: IntCounterVec = register_int_counter_vec!(
+        "grpc_pool_task_kick_count",
+        "Total task kick count in grpc pool",
+        &["name"]
+    )
+    .unwrap();
+
+
 }

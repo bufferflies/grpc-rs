@@ -4,10 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::{Builder as ThreadBuilder, JoinHandle};
+use std::time::Instant;
 
 use crate::grpc_sys;
 
 use crate::cq::{CompletionQueue, CompletionQueueHandle, EventType, WorkQueue};
+use crate::metrics::{GRPC_POOL_IO_HANDLE_DURATION, GRPC_POOL_REPOLL_DURATION};
 use crate::task::CallTag;
 
 // event loop
@@ -16,21 +18,30 @@ fn poll_queue(tx: mpsc::Sender<CompletionQueue>) {
     let worker_info = Arc::new(WorkQueue::new());
     let cq = CompletionQueue::new(cq, worker_info);
     tx.send(cq.clone()).expect("send back completion queue");
+    let name = std::thread::current()
+        .name()
+        .unwrap_or("unknown")
+        .to_owned();
+    let grpc_pool_io_handle_duration = GRPC_POOL_IO_HANDLE_DURATION.with_label_values(&[&name]);
+    let grpc_pool_repoll_duration = GRPC_POOL_REPOLL_DURATION.with_label_values(&[&name]);
     loop {
+        let now = Instant::now();
         let e: grpc_sys::grpc_event = cq.next();
+        grpc_pool_io_handle_duration.observe(now.elapsed().as_secs_f64());
         match e.type_ {
             EventType::GRPC_QUEUE_SHUTDOWN => break,
             // timeout should not happen in theory.
             EventType::GRPC_QUEUE_TIMEOUT => continue,
             EventType::GRPC_OP_COMPLETE => {}
         }
-
+        let repoll_ts = Instant::now();
         let tag: Box<CallTag> = unsafe { Box::from_raw(e.tag as _) };
 
         tag.resolve(&cq, e.success != 0);
         while let Some(work) = unsafe { cq.worker.pop_work() } {
             work.finish();
         }
+        grpc_pool_repoll_duration.observe(repoll_ts.elapsed().as_secs_f64());
     }
 }
 

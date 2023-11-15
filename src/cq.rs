@@ -9,10 +9,9 @@ use std::thread::{self, ThreadId};
 
 use crate::error::{Error, Result};
 use crate::grpc_sys::{self, gpr_clock_type, grpc_completion_queue};
-use crate::task::UnfinishedWork;
 use crate::metrics::*;
-use prometheus::core::GenericGauge;
-use prometheus::{Histogram, IntGauge};
+use crate::task::UnfinishedWork;
+use prometheus::IntGauge;
 
 pub use crate::grpc_sys::grpc_completion_type as EventType;
 pub use crate::grpc_sys::grpc_event as Event;
@@ -146,7 +145,6 @@ pub struct WorkQueue {
     id: ThreadId,
     pending_work: UnsafeCell<VecDeque<UnfinishedWork>>,
     pool_pending_task_count: IntGauge,
-    pool_wait_duration: Histogram,
 }
 
 unsafe impl Sync for WorkQueue {}
@@ -156,16 +154,15 @@ const QUEUE_CAPACITY: usize = 4096;
 
 impl WorkQueue {
     pub fn new() -> WorkQueue {
-        let name= std::thread::current().name().unwrap_or("unknown").to_owned();
-        let (pool_pending_task_count,pool_wait_duration)=(
-            GRPC_POOL_PENDING_TASK_COUNT.with_label_values(&[&name]),
-            GRPC_TASK_WAIT_DURATION.with_label_values(&[&name])
-            );
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("unknown")
+            .to_owned();
+        let pool_pending_task_count = GRPC_POOL_PENDING_TASK_COUNT.with_label_values(&[&name]);
         WorkQueue {
             id: std::thread::current().id(),
             pending_work: UnsafeCell::new(VecDeque::with_capacity(QUEUE_CAPACITY)),
             pool_pending_task_count,
-            pool_wait_duration,
         }
     }
 
@@ -194,9 +191,6 @@ impl WorkQueue {
             queue.shrink_to_fit();
         }
         let task = { &mut *self.pending_work.get() }.pop_back();
-        if let Some(task) = &task {
-            self.pool_wait_duration.observe(task.wait_duration());
-        }
         task
     }
 }
