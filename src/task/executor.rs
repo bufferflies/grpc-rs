@@ -23,9 +23,7 @@ use crate::call::Call;
 use crate::cq::{CompletionQueue, WorkQueue};
 use crate::error::{Error, Result};
 use crate::grpc_sys::{self, grpc_call_error};
-use crate::metrics::{
-    GRPC_POOL_KICK_COUNT, GRPC_POOL_TASK_TOTAL_DURATION, GRPC_TASK_WAIT_DURATION,
-};
+use crate::metrics::{GRPC_POOL_TASK_TOTAL_DURATION, GRPC_TASK_WAIT_DURATION};
 
 /// A handle to a `Spawn`.
 /// Inner future is expected to be polled in the same thread as cq.
@@ -172,12 +170,7 @@ impl ArcWake for SpawnTask {
         // It can lead to deadlock if poll the future immediately. So we need to
         // defer the work instead.
         task.reset_push_time();
-        let name = std::thread::current()
-            .name()
-            .unwrap_or("unknown")
-            .to_owned();
         if let Some(UnfinishedWork(w)) = task.queue.push_work(UnfinishedWork(task.clone())) {
-            GRPC_POOL_KICK_COUNT.with_label_values(&[&name]).inc();
             match task.kicker.kick(Box::new(CallTag::Spawn(w))) {
                 // If the queue is shutdown, then the tag will be notified
                 // eventually. So just skip here.

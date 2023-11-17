@@ -41,19 +41,11 @@ lazy_static! {
     )
     .unwrap();
 
-    // Grpc pool pending task .
-    pub static ref GRPC_POOL_PENDING_TASK_COUNT: IntGaugeVec = register_int_gauge_vec!(
-        "grpc_pool_pending_task_count",
-        "Total pending task in grpc pool",
-        &["name"]
-    )
-    .unwrap();
-
-       // Grpc pool pending task .
-       pub static ref GRPC_POOL_KICK_COUNT: IntCounterVec = register_int_counter_vec!(
-        "grpc_pool_task_kick_count",
-        "Total task kick count in grpc pool",
-        &["name"]
+    // Grpc pool event count task .
+    pub static ref GRPC_POOL_EVENT_COUNT_VEC: IntCounterVec = register_int_counter_vec!(
+        "grpc_pool_event_task_count",
+        "Total event task count in grpc pool",
+        &["name","event"]
     )
     .unwrap();
 

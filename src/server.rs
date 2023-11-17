@@ -24,7 +24,7 @@ use crate::task::{CallTag, CqFuture};
 use crate::RpcContext;
 use crate::RpcStatus;
 
-const DEFAULT_REQUEST_SLOTS_PER_CQ: usize = 5;
+const DEFAULT_REQUEST_SLOTS_PER_CQ: usize = 1;
 
 /// An RPC call holder.
 #[derive(Clone)]

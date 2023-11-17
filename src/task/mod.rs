@@ -24,6 +24,7 @@ use crate::server::RequestCallContext;
 pub(crate) use self::executor::{Executor, Kicker, UnfinishedWork};
 pub(crate) use self::promise::BatchResult;
 pub use self::promise::BatchType;
+pub use crate::metrics::GRPC_POOL_EVENT_COUNT_VEC;
 
 /// A handle that is used to notify future that the task finishes.
 pub struct NotifyHandle<T> {
@@ -171,14 +172,30 @@ impl CallTag {
     }
 
     /// Resolve the CallTag with given status.
-    pub fn resolve(self, cq: &CompletionQueue, success: bool) {
+    pub fn resolve(self, cq: &CompletionQueue, success: bool,thread_name:&str){
         match self {
-            CallTag::Batch(prom) => prom.resolve(success),
-            CallTag::Request(cb) => cb.resolve(cq, success),
-            CallTag::UnaryRequest(cb) => cb.resolve(cq, success),
-            CallTag::Abort(_) => {}
-            CallTag::Action(prom) => prom.resolve(success),
-            CallTag::Spawn(notify) => self::executor::resolve(notify, success),
+            CallTag::Batch(prom) => {
+                prom.resolve(success);
+                GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"batch"]).inc();
+
+            },
+            CallTag::Request(cb) => {
+                cb.resolve(cq, success);
+                GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"request"]).inc();
+            }
+            CallTag::UnaryRequest(cb) =>{
+                cb.resolve(cq, success);
+                GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"unary"]).inc();
+            }
+            CallTag::Abort(_) => {GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"about"]).inc();}
+            CallTag::Action(prom) => {
+                prom.resolve(success);
+                GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"action"]).inc();
+            }
+            CallTag::Spawn(notify) => {
+                self::executor::resolve(notify, success);
+                GRPC_POOL_EVENT_COUNT_VEC.with_label_values(&[thread_name,"spawn"]).inc();
+            }
         }
     }
 }
@@ -220,11 +237,11 @@ mod tests {
         });
 
         assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
-        tag1.resolve(&env.pick_cq(), true);
+        tag1.resolve(&env.pick_cq(), true,"test");
         assert!(rx.recv().unwrap().is_ok());
 
         assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
-        tag2.resolve(&env.pick_cq(), false);
+        tag2.resolve(&env.pick_cq(), false,"test");
         match rx.recv() {
             Ok(Ok(false)) => {}
             res => panic!("expect Ok(false), but got {:?}", res),

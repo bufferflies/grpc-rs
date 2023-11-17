@@ -9,9 +9,7 @@ use std::thread::{self, ThreadId};
 
 use crate::error::{Error, Result};
 use crate::grpc_sys::{self, gpr_clock_type, grpc_completion_queue};
-use crate::metrics::*;
 use crate::task::UnfinishedWork;
-use prometheus::IntGauge;
 
 pub use crate::grpc_sys::grpc_completion_type as EventType;
 pub use crate::grpc_sys::grpc_event as Event;
@@ -144,7 +142,6 @@ impl<'a> Drop for CompletionQueueRef<'a> {
 pub struct WorkQueue {
     id: ThreadId,
     pending_work: UnsafeCell<VecDeque<UnfinishedWork>>,
-    pool_pending_task_count: IntGauge,
 }
 
 unsafe impl Sync for WorkQueue {}
@@ -154,15 +151,9 @@ const QUEUE_CAPACITY: usize = 4096;
 
 impl WorkQueue {
     pub fn new() -> WorkQueue {
-        let name = std::thread::current()
-            .name()
-            .unwrap_or("unknown")
-            .to_owned();
-        let pool_pending_task_count = GRPC_POOL_PENDING_TASK_COUNT.with_label_values(&[&name]);
         WorkQueue {
             id: std::thread::current().id(),
             pending_work: UnsafeCell::new(VecDeque::with_capacity(QUEUE_CAPACITY)),
-            pool_pending_task_count,
         }
     }
 
@@ -172,9 +163,7 @@ impl WorkQueue {
     /// the work will returned and no work is pushed.
     pub fn push_work(&self, work: UnfinishedWork) -> Option<UnfinishedWork> {
         if self.id == thread::current().id() {
-            let queue: &mut VecDeque<UnfinishedWork> = unsafe { &mut *self.pending_work.get() };
-            queue.push_back(work);
-            self.pool_pending_task_count.set(queue.len() as i64);
+            unsafe { &mut *self.pending_work.get() }.push_back(work);
             None
         } else {
             Some(work)
