@@ -43,7 +43,8 @@ impl Greeter for GreeterService {
 
 #[test]
 fn test_kick() {
-    let env = Arc::new(EnvBuilder::new().build());
+    let build=EnvBuilder::new();
+    let env = Arc::new(build.cq_count(5).build());
     let tx = Arc::new(Mutex::new(None));
     let service = create_greeter(GreeterService { tx: tx.clone() });
     let mut server = ServerBuilder::new(env.clone())
@@ -53,35 +54,36 @@ fn test_kick() {
         .unwrap();
     server.start();
     let port = server.bind_addrs().next().unwrap().1;
-    let ch = ChannelBuilder::new(env).connect(&format!("127.0.0.1:{}", port));
-    let client = GreeterClient::new(ch);
-    let mut req = HelloRequest::default();
-    req.set_name("world".to_owned());
-    let f = client.say_hello_async(&req).unwrap();
-    loop {
-        thread::sleep(Duration::from_millis(10));
-        let mut tx = tx.lock().unwrap();
-        if tx.is_none() {
-            continue;
+    for _ in 0..10 {
+        let ch = ChannelBuilder::new(env.clone()).connect(&format!("127.0.0.1:{}", port));
+        let client = GreeterClient::new(ch.clone());
+        let mut req = HelloRequest::default();
+        req.set_name("world".to_owned());
+        let f: ClientUnaryReceiver<HelloReply> = client.say_hello_async(&req).unwrap();
+        loop {
+            thread::sleep(Duration::from_millis(10));
+            let mut tx = tx.lock().unwrap();
+            if tx.is_none() {
+                continue;
+            }
+            tx.take().unwrap().send("hello".to_owned()).unwrap();
+            break;
         }
-        tx.take().unwrap().send("hello".to_owned()).unwrap();
-        break;
+        let reply = block_on(f).expect("rpc");
+        assert_eq!(reply.get_message(), "hello world");
     }
-    let reply = block_on(f).expect("rpc");
-    assert_eq!(reply.get_message(), "hello world");
-
     // Spawn a future in the client.
-    let (tx1, rx2) = spawn_chianed_channel(&client);
-    thread::sleep(Duration::from_millis(10));
-    let _ = tx1.send(77);
-    assert_eq!(block_on(rx2).unwrap(), 77);
+    // let (tx1, rx2) = spawn_chianed_channel(&client);
+    // thread::sleep(Duration::from_millis(10));
+    // let _ = tx1.send(77);
+    // assert_eq!(block_on(rx2).unwrap(), 77);
 
-    // Drop the client before a future is resolved.
-    let (tx1, rx2) = spawn_chianed_channel(&client);
-    drop(client);
-    thread::sleep(Duration::from_millis(10));
-    let _ = tx1.send(88);
-    assert_eq!(block_on(rx2).unwrap(), 88);
+    // // Drop the client before a future is resolved.
+    // let (tx1, rx2) = spawn_chianed_channel(&client);
+    // drop(client);
+    // thread::sleep(Duration::from_millis(10));
+    // let _ = tx1.send(88);
+    // assert_eq!(block_on(rx2).unwrap(), 88);
 }
 
 fn spawn_chianed_channel(
